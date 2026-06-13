@@ -1,56 +1,154 @@
-import { eq } from "drizzle-orm";
+import { count, eq } from "drizzle-orm";
 import type { Request, Response } from "express";
+import z from "zod";
 import { db } from "../db/db.ts";
 import { tasks } from "../db/schema.ts";
+import { createTaskSchema, updateTaskSchema } from "../types/taskSchemaType.ts";
 
+const isValidUUID = (id: string) =>
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 
 export const getAllTasks = async (req: Request, res: Response) => {
-    const allTasks = await db.select().from(tasks);
-    res.status(200).json(allTasks);
-}
+    try {
+        const { status, page = "1", limit = "10" } = req.query;
+
+        const pageNum = Math.max(1, parseInt(page as string) || 1);
+        const limitNum = Math.min(100, Math.max(1, parseInt(limit as string) || 10));
+        const offset = (pageNum - 1) * limitNum;
+
+        const query = db.select().from(tasks).$dynamic();
+        const countQuery = db.select({ count: count() }).from(tasks).$dynamic();
+
+        if (status && typeof status === "string") {
+            query.where(eq(tasks.status, status as any));
+            countQuery.where(eq(tasks.status, status as any));
+        }
+
+        const allTasks = await query.limit(limitNum).offset(offset);
+        const [{ count: total }] = await countQuery;
+
+        res.status(200).json({
+            success: true,
+            data: allTasks,
+            pagination: {
+                page: pageNum,
+                limit: limitNum,
+                total,
+                totalPages: Math.ceil(total / limitNum),
+            },
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ success: false, error: "Internal server error" });
+    }
+};
 
 export const getTaskById = async (req: Request, res: Response) => {
-    const [task] = await db.select().from(tasks).where(eq(tasks.id, req.params.id as string))
+    try {
+        const id = req.params.id as string;
 
-    if(!task){
-        res.status(404).json({error: "task not found"});
-        return;
+        if (!isValidUUID(id)) {
+            res.status(400).json({ success: false, error: "Invalid task ID format" });
+            return;
+        }
+
+        const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
+
+        if (!task) {
+            res.status(404).json({ success: false, error: "Task not found" });
+            return;
+        }
+        res.json({ success: true, data: task });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ success: false, error: "Internal server error" });
     }
-    res.json(task);
-}
+};
 
 export const createNewTask = async (req: Request, res: Response) => {
-    const {title, description, status, priority, dueDate} = req.body;
+    try {
+        const result = createTaskSchema.safeParse(req.body);
+
+        if (!result.success) {
+            res.status(400).json({ success: false, error: z.treeifyError(result.error) });
+            return;
+        }
+
+        const { title, description, status, priority, dueDate } = result.data;
 
         const [newTask] = await db.insert(tasks).values({
             title,
             description: description || "",
             status: status || "pending",
             priority: priority || "medium",
-            dueDate: dueDate ? new Date(dueDate) : null
+            dueDate: dueDate ? new Date(dueDate) : null,
         }).returning();
 
-    res.status(201).json(newTask);
-}
-
-export const updateTaskById = async(req: Request, res: Response) => {
-   const [updated] = await db.update(tasks).set({...req.body, updatedAt: new Date()}).where(eq(tasks.id, req.params.id as string)).returning();
-
-   if(!updated){
-    res.status(404).json({error: "Task not found"});
-    return;
+        res.status(201).json({ success: true, data: newTask });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ success: false, error: "Internal server error" });
     }
+};
 
-    res.json(updated);
-}
+export const updateTaskById = async (req: Request, res: Response) => {
+    try {
+        const id = req.params.id as string;
+
+        if (!isValidUUID(id)) {
+            res.status(400).json({ success: false, error: "Invalid task ID format" });
+            return;
+        }
+
+        const result = updateTaskSchema.safeParse(req.body);
+
+        if (!result.success) {
+            res.status(400).json({ success: false, error: z.treeifyError(result.error) });
+            return;
+        }
+
+        const { dueDate, ...rest } = result.data;
+
+        const [updated] = await db.update(tasks)
+            .set({
+                ...rest,
+                ...(dueDate !== undefined && { dueDate: dueDate ? new Date(dueDate) : null }),
+                updatedAt: new Date(),
+            })
+            .where(eq(tasks.id, id))
+            .returning();
+
+        if (!updated) {
+            res.status(404).json({ success: false, error: "Task not found" });
+            return;
+        }
+
+        res.json({ success: true, data: updated });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ success: false, error: "Internal server error" });
+    }
+};
 
 export const deleteTaskById = async (req: Request, res: Response) => {
-    const [deleted] = await db.delete(tasks).where(eq(tasks.id, req.params.id as string)).returning()
+    try {
+        const id = req.params.id as string;
 
-    if(!deleted){
-        res.status(404).json({error: "Task not found"});
-        return;
+        if (!isValidUUID(id)) {
+            res.status(400).json({ success: false, error: "Invalid task ID format" });
+            return;
+        }
+
+        const [deleted] = await db.delete(tasks).where(eq(tasks.id, id)).returning();
+
+        if (!deleted) {
+            res.status(404).json({ success: false, error: "Task not found" });
+            return;
+        }
+
+        res.json({ success: true, message: "Task deleted", data: deleted });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ success: false, error: "Internal server error" });
     }
-
-    res.json({message: "Task deleted", task: deleted})
-}
+};
