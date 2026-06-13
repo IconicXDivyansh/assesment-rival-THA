@@ -1,4 +1,4 @@
-import { count, eq } from "drizzle-orm";
+import { and, count, eq } from "drizzle-orm";
 import type { Request, Response } from "express";
 import z from "zod";
 import { db } from "../db/db.ts";
@@ -16,12 +16,18 @@ export const getAllTasks = async (req: Request, res: Response) => {
         const limitNum = Math.min(100, Math.max(1, parseInt(limit as string) || 10));
         const offset = (pageNum - 1) * limitNum;
 
+        const userId = (req as any).userId;
+
         const query = db.select().from(tasks).$dynamic();
         const countQuery = db.select({ count: count() }).from(tasks).$dynamic();
 
+        // Filter by userId, and optionally by status
         if (status && typeof status === "string") {
-            query.where(eq(tasks.status, status as any));
-            countQuery.where(eq(tasks.status, status as any));
+            query.where(and(eq(tasks.userId, userId), eq(tasks.status, status as any)));
+            countQuery.where(and(eq(tasks.userId, userId), eq(tasks.status, status as any)));
+        } else {
+            query.where(eq(tasks.userId, userId));
+            countQuery.where(eq(tasks.userId, userId));
         }
 
         const allTasks = await query.limit(limitNum).offset(offset);
@@ -52,7 +58,9 @@ export const getTaskById = async (req: Request, res: Response) => {
             return;
         }
 
-        const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
+        const [task] = await db.select().from(tasks).where(
+            and(eq(tasks.id, id), eq(tasks.userId, (req as any).userId))
+        );
 
         if (!task) {
             res.status(404).json({ success: false, error: "Task not found" });
@@ -77,6 +85,7 @@ export const createNewTask = async (req: Request, res: Response) => {
         const { title, description, status, priority, dueDate } = result.data;
 
         const [newTask] = await db.insert(tasks).values({
+            userId: (req as any).userId,
             title,
             description: description || "",
             status: status || "pending",
@@ -115,7 +124,7 @@ export const updateTaskById = async (req: Request, res: Response) => {
                 ...(dueDate !== undefined && { dueDate: dueDate ? new Date(dueDate) : null }),
                 updatedAt: new Date(),
             })
-            .where(eq(tasks.id, id))
+            .where(and(eq(tasks.id, id), eq(tasks.userId, (req as any).userId)))
             .returning();
 
         if (!updated) {
@@ -139,7 +148,9 @@ export const deleteTaskById = async (req: Request, res: Response) => {
             return;
         }
 
-        const [deleted] = await db.delete(tasks).where(eq(tasks.id, id)).returning();
+        const [deleted] = await db.delete(tasks).where(
+            and(eq(tasks.id, id), eq(tasks.userId, (req as any).userId))
+        ).returning();
 
         if (!deleted) {
             res.status(404).json({ success: false, error: "Task not found" });
