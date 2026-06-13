@@ -1,4 +1,4 @@
-import { and, count, eq } from "drizzle-orm";
+import { and, asc, count, desc, eq, ilike } from "drizzle-orm";
 import type { Request, Response } from "express";
 import z from "zod";
 import { db } from "../db/db.ts";
@@ -10,7 +10,7 @@ const isValidUUID = (id: string) =>
 
 export const getAllTasks = async (req: Request, res: Response) => {
     try {
-        const { status, page = "1", limit = "10" } = req.query;
+        const { status, page = "1", limit = "10", search, sort = "createdAt", order = "desc" } = req.query;
 
         const pageNum = Math.max(1, parseInt(page as string) || 1);
         const limitNum = Math.min(100, Math.max(1, parseInt(limit as string) || 10));
@@ -18,16 +18,36 @@ export const getAllTasks = async (req: Request, res: Response) => {
 
         const userId = (req as any).userId;
 
+        const conditions = [eq(tasks.userId, userId)];
+
+        // Filter by status
+        if (status && typeof status === "string") {
+            conditions.push(eq(tasks.status, status as any));
+        }
+
+        // Search by title
+        if (search && typeof search === "string") {
+            conditions.push(ilike(tasks.title, `%${search}%`));
+        }
+
+        const whereClause = and(...conditions);
+
         const query = db.select().from(tasks).$dynamic();
         const countQuery = db.select({ count: count() }).from(tasks).$dynamic();
 
-        // Filter by userId, and optionally by status
-        if (status && typeof status === "string") {
-            query.where(and(eq(tasks.userId, userId), eq(tasks.status, status as any)));
-            countQuery.where(and(eq(tasks.userId, userId), eq(tasks.status, status as any)));
+        query.where(whereClause);
+        countQuery.where(whereClause);
+
+        // Sort
+        const sortColumn = sort === "dueDate" ? tasks.dueDate
+            : sort === "priority" ? tasks.priority
+            : sort === "createdAt" ? tasks.createdAt
+            : tasks.createdAt;
+
+        if (order === "asc") {
+            query.orderBy(asc(sortColumn));
         } else {
-            query.where(eq(tasks.userId, userId));
-            countQuery.where(eq(tasks.userId, userId));
+            query.orderBy(desc(sortColumn));
         }
 
         const allTasks = await query.limit(limitNum).offset(offset);
