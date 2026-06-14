@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { login, signup } from "../controllers/authController.ts";
 
-const router = Router();
+const router: Router = Router();
 
 router.post("/signup", signup);
 router.post("/login", login);
