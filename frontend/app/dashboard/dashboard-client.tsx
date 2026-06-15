@@ -6,41 +6,41 @@ import EditTaskForm from "@/components/edit-task-form";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Drawer,
-  DrawerDescription,
-  DrawerHeader,
-  DrawerPopup,
-  DrawerTitle,
-  DrawerTrigger,
+    Drawer,
+    DrawerDescription,
+    DrawerHeader,
+    DrawerPopup,
+    DrawerTitle,
+    DrawerTrigger,
 } from "@/components/ui/drawer";
 import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
+    Empty,
+    EmptyDescription,
+    EmptyHeader,
+    EmptyMedia,
+    EmptyTitle,
 } from "@/components/ui/empty";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 import {
-  Select,
-  SelectItem,
-  SelectPopup,
-  SelectTrigger,
-  SelectValue,
+    Select,
+    SelectItem,
+    SelectPopup,
+    SelectTrigger,
+    SelectValue,
 } from "@/components/ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import {
-  CalendarIcon,
-  CheckCircleIcon,
-  ClipboardListIcon,
-  EllipsisVerticalIcon,
-  PencilIcon,
-  PlusIcon,
-  SearchIcon,
+    CalendarIcon,
+    CheckCircleIcon,
+    ClipboardListIcon,
+    EllipsisVerticalIcon,
+    PencilIcon,
+    PlusIcon,
+    SearchIcon,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useMemo, useOptimistic, useState } from "react";
 import type { Task } from "./actions";
 import { updateTaskAction } from "./actions";
 
@@ -58,9 +58,11 @@ type TasksResponse = {
 function TaskCard({
   task,
   onEdit,
+  onOptimistic,
 }: {
   task: Task;
   onEdit: (task: Task) => void;
+  onOptimistic: (action: { type: "complete" | "delete"; id: string }) => void;
 }) {
   const router = useRouter();
 
@@ -77,6 +79,7 @@ function TaskCard({
   };
 
   const handleMarkComplete = async () => {
+    onOptimistic({ type: "complete", id: task.id });
     const formData = new FormData();
     formData.set("id", task.id);
     formData.set("status", "completed");
@@ -141,6 +144,22 @@ export default function DashboardClient({
   const [editDrawerOpen, setEditDrawerOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
 
+  // Optimistic UI
+  const [optimisticTasks, updateOptimistic] = useOptimistic(
+    initialTasks.data,
+    (currentTasks: Task[], action: { type: "complete" | "delete"; id: string }) => {
+      if (action.type === "complete") {
+        return currentTasks.map((t) =>
+          t.id === action.id ? { ...t, status: "completed" as const } : t
+        );
+      }
+      if (action.type === "delete") {
+        return currentTasks.filter((t) => t.id !== action.id);
+      }
+      return currentTasks;
+    }
+  );
+
   // Client-side filters
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -156,7 +175,7 @@ export default function DashboardClient({
 
   // Client-side filtering, sorting, and searching
   const filteredTasks = useMemo(() => {
-    let tasks = [...initialTasks.data];
+    let tasks = [...optimisticTasks];
 
     // Search
     if (search) {
@@ -187,7 +206,7 @@ export default function DashboardClient({
     });
 
     return tasks;
-  }, [initialTasks.data, search, statusFilter, sortBy, sortOrder]);
+  }, [optimisticTasks, search, statusFilter, sortBy, sortOrder]);
 
   const totalPages = Math.ceil(filteredTasks.length / perPage);
   const paginatedTasks = filteredTasks.slice(
@@ -294,7 +313,7 @@ export default function DashboardClient({
 
       {/* Task list */}
       {filteredTasks.length === 0 ? (
-        initialTasks.data.length === 0 ? (
+        optimisticTasks.length === 0 ? (
           <Empty>
             <EmptyMedia variant="icon">
               <ClipboardListIcon aria-hidden="true" />
@@ -319,7 +338,7 @@ export default function DashboardClient({
       ) : (
         <div className="flex flex-col gap-3">
           {paginatedTasks.map((task) => (
-            <TaskCard key={task.id} task={task} onEdit={handleEdit} />
+            <TaskCard key={task.id} task={task} onEdit={handleEdit} onOptimistic={updateOptimistic} />
           ))}
         </div>
       )}
